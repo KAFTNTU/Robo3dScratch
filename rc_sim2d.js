@@ -1,7 +1,86 @@
-
-/* RoboScratch 2D Simulator (single-file) */
+/* RoboScratch 2D Simulator (single-file) 1 */
 (function(){
   'use strict';
+
+// === ONLINE HYBRID GLOBALS (РОЗУМНА ВЕРСІЯ) ===
+window.isOnline = false; 
+window.serverWs = null;
+window.onlineState = "offline";
+
+// ХТО Я? (Сервер скаже: "p1" або "p2")
+window.myPID = null; 
+
+// КООРДИНАТИ
+window.serverBotData = { x: 0, y: 0, a: 0 }; // Я (Моя машинка)
+window.enemyBotData = { x: 0, y: 0, a: 0 };  // ВОРОГ (Суперник)
+
+window.connectToSumo = function() {
+    console.log("Connecting...");
+    window.onlineState = "connecting";
+    
+    // Твоя адреса
+    window.serverWs = new WebSocket("wss://rc-sumo-server.kafrdrapv1.workers.dev/ws?room=default");
+
+    window.serverWs.onopen = () => {
+        window.isOnline = true;
+        window.onlineState = "online";
+        console.log("ONLINE MODE ACTIVATED!"); 
+        alert("🟢 З'єднано! Чекаємо розподілу ролей...");
+    };
+
+    window.serverWs.onmessage = (e) => {
+        try {
+            const d = JSON.parse(e.data);
+
+            // 1. СЕРВЕР КАЖЕ, ХТО ТИ (Приходить одразу при вході)
+            if (d.t === "hello") {
+                window.myPID = d.pid; // "p1" або "p2"
+                console.log(`✅ ТВОЯ РОЛЬ: ${window.myPID}`);
+                alert(`Ти граєш за гравця: ${window.myPID.toUpperCase()}`);
+            }
+
+            // 2. ОТРИМУЄМО КООРДИНАТИ (Приходить постійно)
+            if (d.t === "state" && d.bots) {
+                // Якщо сервер ще не сказав, хто ми — ігноруємо
+                if (!window.myPID) return;
+
+                const me = window.myPID;                 
+                const enemy = (me === "p1") ? "p2" : "p1"; // Якщо я p1, то ворог p2
+
+                // Оновлюємо СЕБЕ (щоб їхати)
+                if (d.bots[me]) {
+                    window.serverBotData = d.bots[me];
+                }
+
+                // Оновлюємо ВОРОГА (щоб знати де він)
+                if (d.bots[enemy]) {
+                    window.enemyBotData = d.bots[enemy];
+                }
+            }
+        } catch(err){}
+    };
+
+    window.serverWs.onerror = () => {
+        window.isOnline = false;
+        window.onlineState = "offline";
+    };
+
+    window.serverWs.onclose = () => {
+        window.isOnline = false;
+        window.onlineState = "offline";
+        window.myPID = null;
+        console.log("OFFLINE MODE"); 
+        alert("🔴 OFFLINE. Зв'язок втрачено.");
+    };
+    setInterval(() => {
+        if (window.isOnline && window.myPID) {
+            // Пише в консоль раз на секунду
+            console.log(`🆔 Я ГРАЮ ЗА: [ ${window.myPID.toUpperCase()} ]`);
+        }
+    }, 1000);
+};
+
+  // ========== Small utilities ==========
 
   // ========== Small utilities ==========
   const clamp = (v,a,b)=> (v<a?a:(v>b?b:v));
@@ -104,6 +183,20 @@
   .rcsim2d-topBtn:hover{background:rgba(2,6,23,.72);}
   /* Top tools (obstacles/brush/eraser/help) */
   .rcsim2d-topTools{display:flex;align-items:center;gap:10px;margin-left:auto;margin-right:10px;align-self:center;}
+
+  .rcsim2d-onlineDot{width:10px;height:10px;border-radius:50%;display:inline-block;background:#ef4444;box-shadow:0 0 0 2px rgba(0,0,0,.35) inset;}
+  .rcsim2d-onlineDot.green{background:#22c55e;}
+  .rcsim2d-onlineDot.yellow{background:#f59e0b;}
+  .rcsim2d-onlineDot.red{background:#ef4444;}
+
+  .rcsim2d-onlineStatus{
+    position:static;
+    padding:8px 10px; border-radius:12px;
+    background:rgba(0,0,0,.55); color:#fff;
+    font:600 12px/1.1 system-ui,Segoe UI,Arial;
+    z-index:99999; user-select:none; pointer-events:none;
+  }
+
   /* aligned, no transform */
   .rcsim2d-topToolsSep{width:1px;height:22px;background:rgba(148,163,184,.18);margin:0 2px;}
   .rcsim2d-topTool{background:rgba(2,6,23,.55);border:1px solid rgba(148,163,184,.18);color:#e2e8f0;border-radius:14px;padding:10px 14px;font-weight:950;font-size:18px;cursor:pointer;line-height:1;min-width:44px;min-height:44px;display:flex;align-items:center;justify-content:center;}
@@ -4659,7 +4752,20 @@
   };
 
   // User-drawn line track (edited in 3D overlay)
-  TRACKS['CustomLine'] = {
+  
+  // Sumo arena: circular ring, diameter about 6 robot lengths (tunable)
+  TRACKS['SumoArena'] = {
+    kind: 'sumo',
+    // Robot radius is 32px => robot diameter ~= 64px. We want ring diameter = 6 robots => 384px, radius=192.
+    arenaRadius: 400,
+    ringWidth:  8,
+    // Start distance between robot bodies = 2 robots (128px). Center distance = 128 + 64 = 192 => ±96.
+    start: { x: -100, y: 0, a: 0 },
+    start2:{ x:  100, y: 0, a: Math.PI },
+    theme: { bg: '#0b1020' }
+  };
+
+TRACKS['CustomLine'] = {
     kind: 'line',
     lineWidth: 12,
     line: [],
@@ -4707,7 +4813,7 @@
   };
 
 
-  const TRACK_ORDER = ['LineFollow','CustomLine','Sandbox'];
+  const TRACK_ORDER = ['LineFollow','CustomLine','SumoArena','Sandbox'];
 
   // ========== Geometry helpers ==========
   function segDist(px,py, ax,ay, bx,by){
@@ -4862,10 +4968,13 @@
       wheelBase: 60,
       maxSpeed: 240, // px/s
       maxAccel: 520, // px/s^2
-      radius: 22,
+      radius: 32,
       wheelRotL:0,
       wheelRotR:0,
     },
+    // opponent (for Sumo online / local tests)
+    bot2:null,
+
 
     // sensors: 4 sensors in bot local coords (px)
     // Default: corners of a square so they don't start stacked in one point.
@@ -5051,11 +5160,42 @@
       this.root = makeEl('div',{class:'rcsim2d-root',id:'rcsim2dRoot'});
       const shell = makeEl('div',{class:'rcsim2d-shell'});
       const top = makeEl('div',{class:'rcsim2d-top'});
+      this.ui.top = top;
       const title = makeEl('div',{class:'rcsim2d-title'},[
         makeEl('span',{class:'rcsim2d-dot'}),
         'Симулятор (3D)'
       ]);
       const btnPanel = makeEl('button',{class:'rcsim2d-topBtn',onclick:()=>{ this.root.classList.toggle('collapsed'); this.resize(); }},'Панель');
+      const btnTrack = makeEl('button',{class:'rcsim2d-topBtn',onclick:()=>{
+        try{ this.disconnectOnline && this.disconnectOnline(); }catch(e){}
+        const last = this._lastNonSumoTrack || (this.trackName!=='SumoArena' ? this.trackName : 'Sandbox');
+        this.setTrack(last);
+      }},'Траса');
+
+      const btnSumoOnline = makeEl('button',{class:'rcsim2d-topBtn',onclick:()=>{
+        try{
+          // Ensure sumo track selected
+          if (this.track && this.track.kind!=='sumo') this._lastNonSumoTrack = this.trackName;
+          if (!this.track || this.track.kind!=='sumo') this.setTrack('SumoArena');
+          // Fixed Cloudflare Workers host (no need to paste every time)
+const host = 'rc-sumo-server.kafrdrapv1.workers.dev';
+const room = (prompt('Код кімнати (будь-що, напр: ABCD...)', localStorage.getItem('rc_online_room')||'ABCD')||'').trim();
+if (!room) return;
+localStorage.setItem('rc_online_room', room);
+
+// Build WS URL. Allow both ws/wss based on current page protocol.
+let hostSan = String(host||'').trim().replace(/^https?:\/\//i,'').replace(/^wss?:\/\//i,'');
+let proto = (location.protocol === 'https:') ? 'wss' : 'ws';
+if (hostSan.includes('workers.dev')) proto = 'wss';
+const ws = `${proto}://${hostSan}/ws?room=${encodeURIComponent(room)}`;
+this.connectOnline(room, ws);
+
+alert('Онлайн сумо: введи ТОЙ САМИЙ код кімнати на 2-му ПК.\nПерший в кімнаті = ЧЕРВОНІ шестерні (P1).\nДругий = СИНІ шестерні (P2).');        }catch(e){ alert('Не вдалося підключитись: ' + e.message); }
+      }},'Сумо онлайн');
+      const btnExitOnline = makeEl('button',{class:'rcsim2d-topBtn',onclick:()=>{ try{ this.disconnectOnline && this.disconnectOnline(); }catch(e){} }},'Вийти');
+      this.ui.btnExitOnline = btnExitOnline;
+      btnExitOnline.style.display='none';
+
 
       // Top tools: obstacles + line brush/eraser + help.
       const tools = makeEl('div',{class:'rcsim2d-topTools'});
@@ -5112,6 +5252,9 @@
       }},'Назад');
       top.appendChild(title);
       top.appendChild(btnPanel);
+      top.appendChild(btnTrack);
+      top.appendChild(btnSumoOnline);
+      top.appendChild(btnExitOnline);
       top.appendChild(tools);
       top.appendChild(btnBack);
 
@@ -5143,9 +5286,6 @@
       // Hide L0/R0 pill (user request). Keep element for compatibility.
       this.ui.pLR.style.display='none';
       hud.appendChild(this.ui.pLR);
-      this.ui.pOff = makeEl('div',{class:'rcsim2d-pill bad'},'ПОЗА ТРАСОЮ');
-      this.ui.pOff.style.display='none';
-      hud.appendChild(this.ui.pOff);
       // FPS pill (top-left)
       this.ui.pFps = makeEl('div',{class:'rcsim2d-pill'},['FPS ', makeEl('span',{id:'rcsim2dFpsVal'},'--')]);
       hud.appendChild(this.ui.pFps);
@@ -5154,8 +5294,8 @@
       // Footer buttons
       const footer = makeEl('div',{class:'rcsim2d-footer'});
       // Only two buttons: Start + Stop (no Pause)
-      this.ui.btnRun  = makeEl('button',{class:'rcsim2d-btn primary',onclick:()=>this.startProgram()},'Старт');
-      this.ui.btnStop = makeEl('button',{class:'rcsim2d-btn danger',onclick:()=>this.stopProgram()},'Стоп');
+      this.ui.btnRun  = makeEl('button',{class:'rcsim2d-btn primary',onclick:()=>this.onStartPressed()},'Старт');
+      this.ui.btnStop = makeEl('button',{class:'rcsim2d-btn danger',onclick:()=>this.onStopPressed()},'Стоп');
       this.ui.btnStop.disabled = true;
       this.ui.btnStop.style.opacity = '.6';
       footer.appendChild(this.ui.btnRun);
@@ -5246,6 +5386,16 @@
         const mx = e.clientX-rect.left;
         const my = e.clientY-rect.top;
 
+        const onlineSumo = (this.isOnlineSumo && this.isOnlineSumo());
+        if (onlineSumo){
+          // Disallow any interaction that can move/rotate the bot or edit sensors/obstacles.
+          this.botDrag = false;
+          this._lmbOnBot = false;
+          this.sensorDrag = -1;
+          this.obstacleDrag = -1;
+        }
+
+        if (!onlineSumo){
 
         // quick RMB delete obstacle when obstacle tool is selected
         if (btn===2 && /^obs_/.test(this.uiTool||'')){
@@ -5312,6 +5462,14 @@
             this.dragging = false;
             return;
           }
+        }
+
+        
+        }
+
+        // ONLINE SUMO: disable canvas panning/dragging gestures (anti-cheat)
+        if (onlineSumo){
+          return;
         }
 
         // pan with any mouse button
@@ -5458,35 +5616,10 @@
       const s = this.side;
       s.innerHTML='';
 
-      s.appendChild(makeEl('div',{class:'rcsim2d-panelTitle'},'Траса'));
+      
+      // Track selector removed (single track workflow)
 
-      const sel = makeEl('select',{class:'rcsim2d-select'});
-      const trackLabelsUA = {
-        LineFollow: 'Лінія: коло',
-        CustomLine: 'Лінія: намалювати',
-        Sandbox: 'Пісочниця',
-        Arena: 'Арена',
-        Oval: 'Овал (лінія)',
-      };
-      for (const name of TRACK_ORDER){
-        const opt = makeEl('option', {value:name}, trackLabelsUA[name] || name);
-        if (name===this.trackName) opt.selected = true;
-        sel.appendChild(opt);
-      }
-      sel.addEventListener('change', ()=>{
-        // Changing track while an async program is running can freeze the UI
-        // (the program keeps awaiting, while sim state is re-created).
-        // So we stop any running program before applying a new track.
-        this.stopFlag = true;
-        window._shouldStop = true;
-        this.paused = true;
-        this.running = false;
-        this.setTrack(sel.value);
-        this.resetBot();
-      });
-      s.appendChild(sel);
-
-      const chkCam = makeEl('label',{class:'rcsim2d-check'},[
+const chkCam = makeEl('label',{class:'rcsim2d-check'},[
         makeEl('input',{type:'checkbox',checked:true}),
         makeEl('span',null,'Камера')
       ]);
@@ -5514,7 +5647,10 @@
         this.speedMul = clamp(parseFloat(speed.value)||1, 0.05, 5);
         speedLabel.querySelector('#rcsim2dSpeedVal').textContent = (this.speedMul||1).toFixed(2)+'x';
       });
-      speedWrap.appendChild(speedLabel);
+            // Keep refs so we can lock speed in online sumo
+      this.ui.speedSlider = speed;
+      this.ui.speedValEl = speedLabel.querySelector('#rcsim2dSpeedVal');
+speedWrap.appendChild(speedLabel);
       speedWrap.appendChild(speed);
       s.appendChild(speedWrap);
 
@@ -5635,6 +5771,14 @@
       this.trackName = name;
       this.track = TRACKS[name] || TRACKS['Sandbox'] || TRACKS['LineFollow'];
       this.theme = themeForTrack(name, this.track);
+      // In sumo mode, "off track" doesn't apply.
+      if (this.track && this.track.kind==='sumo'){
+        this.offTrack = false;
+        this.offTrackAccum = 0;
+        this.autoStopOffTrack = false;
+      } else {
+        this.autoStopOffTrack = true;
+      }
       this.buildSideUI();
       // Fit view after UI/layout settles
       requestAnimationFrame(()=>{ this.resize(); this.fitToTrack(); });
@@ -5652,6 +5796,20 @@
       this.bot.r = 0;
       this.bot.wheelRotL = 0;
       this.bot.wheelRotR = 0;
+      this.bot.radius = 32;
+      this.bot.halfWidth = 34;
+      this.bot.halfLength = 44;
+      // Sumo: opponent is shown ONLY when a real second player is connected online.
+// Do not spawn a fake bot offline (prevents "bot" appearing outside/after leaving online sumo).
+if (this.track && this.track.kind==='sumo'){
+  this.bot2 = null;
+  this.sumoWinner = null;
+  this.sumoOut = false;
+  this.sumoOut2 = false;
+} else {
+  this.bot2 = null;
+  this.sumoWinner = null;
+}
       this.lastCmd = 'L0 R0';
       this.updateHUD();
     },
@@ -5770,7 +5928,7 @@
 
     togglePause(){
       this.paused = !this.paused;
-      this.ui.btnPause.textContent = this.paused ? 'Продовжити' : 'Пауза';
+      if (this.ui && this.ui.btnPause) { this.ui.btnPause.textContent = this.paused ? "Продовжити" : "Пауза"; }
     },
 
     updateRunBtn(){
@@ -5933,7 +6091,7 @@ ${code}
         stopIfNeeded: ()=> this.stopIfNeeded(),
         getSensors: ()=> this.sensorValues.slice(),
         getDistance: ()=> this.distValue,
-        drive: (l,r)=> this.setDrive(l,r),
+        drive: (l,r)=> this.sendDrive(l,r),
       };
       try{
         window.__RCSIM_LAST_RC = RC;
@@ -5964,7 +6122,248 @@ ${code}
       });
     },
 
-    setDrive(l,r){
+    sendDrive(l,r){
+      // If online mode is active, send to server; otherwise apply locally.
+      if (this.online && this.online.ws && this.online.ws.readyState===1){
+        const msg = { t:'input', pid: this.online.pid || 'p1', l:Number(l)||0, r:Number(r)||0 };
+        try { this.online.ws.send(JSON.stringify(msg)); } catch(e){}
+        // also keep local command for UI
+        this.lastCmd = `L${Math.round(msg.l)} R${Math.round(msg.r)}`;
+        return;
+      }
+      this.setDrive(l,r);
+    },
+
+    setOnlineStatus(state){
+      // state: 'connected'|'connecting'|'error'|''
+      try{
+        if (!this._onlineStatusEl){
+          // Try to hide/show exit button based on state
+          if (this.ui && this.ui.btnExitOnline) this.ui.btnExitOnline.style.display='none';
+          const el = document.createElement('div');
+          el.className = 'rcsim2d-onlineStatus';
+          const parent = (this.ui && this.ui.top) ? this.ui.top : document.body;
+          parent.appendChild(el);
+          this._onlineStatusEl = el;
+        }
+        const el = this._onlineStatusEl;
+        if (!state){ el.style.display='none'; if (this.ui && this.ui.btnExitOnline) this.ui.btnExitOnline.style.display='none'; return; }
+        el.style.display='flex';
+        el.style.alignItems='center';
+        el.style.gap='8px';
+
+        let cls = 'red';
+        let text = '';// dot-only
+        if (state==='connected'){ cls='green'; text=''; }
+        else if (state==='connecting'){ cls='yellow'; text=''; }
+        else if (state==='error'){ cls='red'; text=''; }
+
+        el.innerHTML = `<span class="rcsim2d-onlineDot ${cls}"></span>`;
+        if (this.ui && this.ui.btnExitOnline) this.ui.btnExitOnline.style.display='';
+      }catch(e){}
+    },
+
+    disconnectOnline(){
+      try{
+        if (this.online && this.online.ws){
+          try{ this.online.ws.close(1000,'bye'); }catch(e){}
+        }
+      }catch(e){}
+      this.online = null;
+      // Ensure we don't keep showing an opponent when leaving online mode.
+      this.bot2 = null;
+      this.sumoWinner = null;
+      this.setOnlineStatus && this.setOnlineStatus('');
+    },
+
+    connectOnline(room, server){
+      this.setOnlineStatus && this.setOnlineStatus('connecting');
+
+      // Normalize room code. Users may paste "room=ABC", full query strings, or just the code.
+      let roomCode = (room || 'default').toString().trim();
+      // If they pasted a full URL or query string, extract the room param.
+      roomCode = roomCode.replace(/^.*[?&]room=/i, '');
+      // If they pasted "room=XYZ" directly, strip prefix.
+      roomCode = roomCode.replace(/^room=/i, '');
+      // Stop at next param delimiter.
+      roomCode = roomCode.split('&')[0].trim();
+      if (!roomCode) roomCode = 'default';
+
+      const r = encodeURIComponent(roomCode);
+      let u = (server||'').toString().trim();
+
+      // server can be: host, https://host, ws(s)://host, or full ws url
+      if (!u){
+        u = location.origin.replace(/^http/i,'ws') + '/ws?room=' + r;
+      } else {
+        // if full http(s) url provided, convert to ws(s)
+        u = u.replace(/^https?:\/\//i, (m)=> m.toLowerCase()==='https://' ? 'wss://' : 'ws://');
+
+        // if only host provided, build ws url
+        if (!/^wss?:\/\//i.test(u)){
+          u = u.replace(/^wss?:\/\//i,'').replace(/^https?:\/\//i,'');
+          u = u.replace(/\/$/,'');
+          const isLocal = /^localhost|^127\.0\.0\.1/i.test(u);
+          const proto = isLocal ? 'ws' : 'wss';
+          u = proto + '://' + u;
+        }
+
+        // ensure path contains /ws
+        if (!/\/ws(\?|$)/i.test(u)){
+          u = u.replace(/\/$/,'') + '/ws';
+        }
+
+        // normalize existing room param if present, otherwise append it
+        if (/[?&]room=/i.test(u)){
+          // Replace existing room param value (handles "room=room=1" mistakes)
+          u = u.replace(/([?&]room=)[^&]*/i, '$1' + r);
+        } else {
+          u += (u.includes('?') ? '&' : '?') + 'room=' + r;
+        }
+      }
+
+      // Debug
+      try { console.log('[SUMO] ws url:', u); } catch(e){}
+
+      const ws = new WebSocket(u);
+      this.online = { ws, room: room||'default', pid:null, fightStarted:false, startPending:false, startPendingUntil:0 };
+      ws.addEventListener('open',()=>{ this.setOnlineStatus && this.setOnlineStatus('connected');
+        // AUTO-START program in online mode (no need to press Старт)
+        try{ if (!this.running) this.startProgram(); else this.paused=false; }catch(e){}
+      });
+      ws.addEventListener('error',()=>{ this.setOnlineStatus && this.setOnlineStatus('error'); });
+
+      ws.addEventListener('message',(ev)=>{
+  try{
+    const d = JSON.parse(ev.data);
+    if (d.t==='hello'){
+      this.online.pid = d.pid;
+      this.online.phase = (typeof d.phase==='string') ? d.phase : (this.online.phase||'lobby');
+      this.online.fightStarted = (this.online.phase==='fight');
+      // AUTO-START when match is in fight
+      if (this.online.fightStarted){ try{ if (!this.running) this.startProgram(); else this.paused=false; }catch(e){} }
+      this.online.startPending = (this.online.phase==='countdown');
+      this.online.startPendingUntil = 0;
+      if (d.bots){ this.applyOnlineState(d.bots); }
+    }
+    if (d.t==='countdown'){
+      // Server-driven countdown (no control messages)
+      this.online.phase = 'countdown';
+      this.online.fightStarted = false;
+      this.online.startPending = true;
+      const ms = Number(d.ms || d.msLeft || 0) || 0;
+      this.online.startPendingUntil = Date.now() + Math.max(0, ms);
+    }
+
+    if (d.t==='control'){
+      if (d.op==='start'){
+        if (d.phase==='fight'){
+          this.online.fightStarted = true;
+          this.online.startPending = false;
+          this.online.startPendingUntil = 0;
+        } else {
+          // pending window
+          this.online.startPending = true;
+          if (typeof d.msLeft==='number') this.online.startPendingUntil = Date.now() + Math.max(0, d.msLeft);
+        }
+      }
+      if (d.op==='stop'){
+        // End match (timeout/manual/opponent_left) and exit online mode
+        this.online.fightStarted = false;
+        this.online.startPending = false;
+        this.online.startPendingUntil = 0;
+        try{ this.online.ws.close(1000,'match_end'); }catch(e){}
+        this.online.ws = null;
+        this.setOnlineStatus && this.setOnlineStatus('error');
+      }
+    }
+    if (d.t==='state'){
+      if (typeof d.phase==='string'){ this.online.phase = d.phase; this.online.fightStarted = (d.phase==='fight');
+      if (this.online.fightStarted){ try{ if (!this.running) this.startProgram(); else this.paused=false; }catch(e){} } this.online.startPending = (d.phase==='countdown'); if (this.online.startPending && typeof d.msLeft==='number') this.online.startPendingUntil = Date.now()+Math.max(0,d.msLeft); }
+      if (d.bots){ this.applyOnlineState(d.bots); }
+      this.sumoWinner = d.winner ? (d.winner===this.online.pid?'you':'opponent') : null;
+    }
+  }catch(e){}
+});
+      ws.addEventListener('close',()=>{ if (this.online){ this.online.ws=null; this.online.fightStarted=false; this.online.startPending=false; this.online.startPendingUntil=0; } this.setOnlineStatus && this.setOnlineStatus('error'); });
+    },
+
+    applyOnlineState(bots){
+      // bots.{p1,p2} are in sim pixel units already (server-authoritative)
+      const pid = (this.online && this.online.pid) || 'p1';
+      const me = bots[pid] || bots.p1;
+      const opp = (pid==='p1') ? bots.p2 : bots.p1;
+
+      const applyBot = (dst, src)=>{
+        if (!dst || !src) return;
+        dst.x = Number(src.x)||0;
+        dst.y = Number(src.y)||0;
+        dst.a = Number(src.a)||0;
+        // also sync velocities + last motor commands to avoid local physics fighting server state
+        if ('vx' in src) dst.vx = Number(src.vx)||0;
+        if ('vy' in src) dst.vy = Number(src.vy)||0;
+        if ('wa' in src) dst.wa = Number(src.wa)||0;
+        if ('l'  in src) dst.l  = clamp(Number(src.l)||0, -100, 100);
+        if ('r'  in src) dst.r  = clamp(Number(src.r)||0, -100, 100);
+      };
+
+      if (me){
+        applyBot(this.bot, me);
+      }
+      if (opp){
+        if (!this.bot2) this.bot2 = Object.assign({}, this.bot, {x:0,y:0,a:0,vx:0,vy:0,wa:0,l:0,r:0});
+        applyBot(this.bot2, opp);
+      } else {
+        // If opponent is not connected, hide/remove bot2 so we don't show a fake bot.
+        this.bot2 = null;
+      }
+    },
+
+
+    isOnlineSumoConnected(){
+      try{
+        return !!(this.track && this.track.kind==='sumo' && this.online && this.online.ws && this.online.ws.readyState===1);
+      }catch(e){ return false; }
+    },
+
+    sendControl(op){
+      if (!this.online || !this.online.ws || this.online.ws.readyState!==1) return;
+      try{ this.online.ws.send(JSON.stringify({ t:'control', op })); }catch(e){}
+    },
+
+    onStartPressed(){
+      // In online sumo, "Старт" means: request match start (both must press within 5s)
+      if (this.isOnlineSumoConnected()){
+        if (!this.online) return;
+        this.online.fightStarted = false;
+        this.online.startPending = true;
+        this.online.startPendingUntil = Date.now() + 5000;
+        this.sendControl('start');
+        // Start program locally too (server will ignore inputs until fight begins)
+        if (!this.running) this.startProgram();
+        // Disable Stop button until program actually starts/stop? keep as-is
+        return;
+      }
+      // offline: start program as usual
+      this.startProgram();
+    },
+
+    onStopPressed(){
+      // Stop local program
+      this.stopProgram();
+      // In online sumo, stop also exits match (kicks both sides)
+      if (this.isOnlineSumoConnected()){
+        this.sendControl('stop');
+        try{ this.online.ws.close(1000,'manual_stop'); }catch(e){}
+        this.online.ws = null;
+        this.online.fightStarted = false;
+        this.online.startPending = false;
+        this.setOnlineStatus && this.setOnlineStatus('error');
+      }
+    },
+
+setDrive
+(l,r){
       l = clamp(Number(l)||0, -100, 100);
       r = clamp(Number(r)||0, -100, 100);
       this.bot.l = l;
@@ -6091,6 +6490,48 @@ ${code}
         this.panX = lerp(this.panX, this.targetPanX, clamp(pk,0,1));
         this.panY = lerp(this.panY, this.targetPanY, clamp(pk,0,1));
         this.dtBase = dt;
+
+        // Anti-cheat + fairness: in ONLINE SUMO lock interactive edits and force speed multiplier to 1.00x.
+        const _onlineSumo = (this.isOnlineSumo && this.isOnlineSumo());
+        if (_onlineSumo){
+          // hard-disable any in-canvas bot manipulation
+          this.botDrag = false;
+          this._lmbOnBot = false;
+          this.sensorDrag = -1;
+          this.obstacleDrag = -1;
+
+          if (this.speedMul !== 1) this.speedMul = 1;
+          if (this.ui && this.ui.speedSlider){
+            this.ui.speedSlider.disabled = true;
+            this.ui.speedSlider.value = '1';
+            this.ui.speedSlider.style.pointerEvents = 'none';
+            this.ui.speedSlider.style.opacity = '0.55';
+          }
+          if (this.ui && this.ui.speedValEl){
+            this.ui.speedValEl.textContent = '1.00x';
+          }
+
+          // Show 5s READY countdown on the Start button (UX clarity)
+          try{
+            if (this.ui && this.ui.btnRun){
+              if (this.online && this.online.fightStarted){
+                this.ui.btnRun.textContent = 'Бій';
+              } else if (this.online && this.online.startPending){
+                const ms = (this.online.startPendingUntil||0) - Date.now();
+                const s = Math.max(0, Math.ceil(ms/1000));
+                this.ui.btnRun.textContent = s>0 ? ('Старт ('+s+')') : 'Старт';
+              } else {
+                this.ui.btnRun.textContent = 'Старт';
+              }
+            }
+          }catch(e){}
+        } else {
+          if (this.ui && this.ui.speedSlider){
+            this.ui.speedSlider.disabled = false;
+            this.ui.speedSlider.style.pointerEvents = '';
+            this.ui.speedSlider.style.opacity = '';
+          }
+        }
         const physDt = dt * (this.speedMul||1);
         this.dt = physDt;
         try{
@@ -6109,11 +6550,34 @@ ${code}
     },
 
     tick(dt){
+      // ONLINE SUMO: server-authoritative positions. Do not integrate locally.
+      if (this.isOnlineSumoConnected && this.isOnlineSumoConnected()){
+        // Update sensors
+        this.updateSensors();
+
+        // Camera follow (optional)
+        if (this.ui && this.ui.chkCam && this.ui.chkCam.checked){
+          const rect = this.canvas.getBoundingClientRect();
+          const z = this.zoom;
+          const tx = rect.width/2 - this.bot.x*z;
+          const ty = rect.height/2 - this.bot.y*z;
+          this.panX = lerp(this.panX, tx, clamp(dt*3.6,0,1));
+          this.panY = lerp(this.panY, ty, clamp(dt*3.6,0,1));
+        }
+
+        // Update HUD
+        this.updateHUD();
+        return;
+      }
+
       // Convert motor commands to wheel speeds
       const bot = this.bot;
       const maxV = bot.maxSpeed;
       const targVL = (bot.l/100) * maxV;
       const targVR = (bot.r/100) * maxV;
+             // Sumo online: no offline 'bot2' AI. Opponent appears only when real second player is connected.
+
+
 
       // Accel limit: adjust vx along heading and angular
       const v = (targVL + targVR)*0.5;
@@ -6131,20 +6595,190 @@ ${code}
       bot.wa = lerp(bot.wa, w, clamp(dt*5.0,0,1));
 
       // Position update
-      bot.x += bot.vx * dt;
-      bot.y += bot.vy * dt;
-      bot.a += bot.wa * dt;
-
+// === ГІБРИДНА ФІЗИКА (ПЛАВНА) ===
+      if (window.isOnline && window.serverBotData) {
+          // 1. Плавний рух (щоб не лагало)
+          const t = 0.5; 
+          bot.x = bot.x + (window.serverBotData.x - bot.x) * t;
+          bot.y = bot.y + (window.serverBotData.y - bot.y) * t;
+          bot.a = window.serverBotData.a; 
+          
+          // 2. Відправка команд на сервер
+          if (window.serverWs && window.serverWs.readyState === 1) {
+             window.serverWs.send(JSON.stringify({ 
+                 t: "input", 
+                 l: bot.l || 0, 
+                 r: bot.r || 0 
+             }));
+          }
+      } else {
+          // ОФЛАЙН (якщо інтернету немає)
+          bot.x += bot.vx * dt;
+          bot.y += bot.vy * dt;
+          bot.a += bot.wa * dt;
+      }
       // Wheels rotation for visuals
       bot.wheelRotL += targVL * dt * 0.03;
       bot.wheelRotR += targVR * dt * 0.03;
 
-      // Collision with arena walls (simple)
+      
+       // Opponent physics (same differential drive)
+       if (this.bot2){
+         const b2 = this.bot2;
+         const maxV2 = b2.maxSpeed || maxV;
+         const tvl2 = (b2.l/100) * maxV2;
+         const tvr2 = (b2.r/100) * maxV2;
+         const v2 = (tvl2 + tvr2)*0.5;
+         const w2 = (tvr2 - tvl2) / (b2.wheelBase || bot.wheelBase);
+         const ca2 = Math.cos(b2.a||0), sa2 = Math.sin(b2.a||0);
+         const vx2 = ca2 * v2;
+         const vy2 = sa2 * v2;
+         b2.vx = lerp(b2.vx||0, vx2, clamp(dt*4.0,0,1));
+         b2.vy = lerp(b2.vy||0, vy2, clamp(dt*4.0,0,1));
+         b2.wa = lerp(b2.wa||0, w2, clamp(dt*5.0,0,1));
+         b2.x += (b2.vx||0) * dt;
+         b2.y += (b2.vy||0) * dt;
+         b2.a = (b2.a||0) + (b2.wa||0) * dt;
+         b2.wheelRotL = (b2.wheelRotL||0) + tvl2 * dt * 0.03;
+         b2.wheelRotR = (b2.wheelRotR||0) + tvr2 * dt * 0.03;
+       }
+
+      // Sumo: robot-robot collision using rectangular hitboxes (OBB, SAT) — prevents any mesh overlap
+      if (this.track && this.track.kind==='sumo' && this.bot2){
+        const b1 = this.bot, b2 = this.bot2;
+
+        // Tight hitbox around roof + wheels (tweak if needed)
+        const hw1 = (b1.halfWidth  != null) ? b1.halfWidth  : 34; // half width
+        const hl1 = (b1.halfLength != null) ? b1.halfLength : 44; // half length
+        const hw2 = (b2.halfWidth  != null) ? b2.halfWidth  : 34;
+        const hl2 = (b2.halfLength != null) ? b2.halfLength : 44;
+
+        // Oriented rectangle axes
+        const a1 = b1.a || 0, a2 = b2.a || 0;
+        const c1 = Math.cos(a1), s1 = Math.sin(a1);
+        const c2 = Math.cos(a2), s2 = Math.sin(a2);
+
+        // Axes (unit) for each box in world space
+        const ax1x = c1, ax1y = s1;      // forward
+        const ay1x = -s1, ay1y = c1;     // left
+        const ax2x = c2, ax2y = s2;
+        const ay2x = -s2, ay2y = c2;
+
+        // Center delta from b1 to b2
+        const dx = (b2.x - b1.x), dy = (b2.y - b1.y);
+
+        // Helper: project box onto an axis -> radius
+        const abs = Math.abs;
+        const projRadius = (hw, hl, axx, axy, bx, by) => {
+          // radius = sum of half extents * |dot(axis, boxAxis)|
+          return hw*abs(axx*bx + axy*by) + hl*abs(axx*axx + axy*axy); // placeholder
+        };
+
+        // We'll do SAT properly using 4 candidate axes: ax1, ay1, ax2, ay2
+        function satAxis(axisX, axisY){
+          // distance between centers along axis
+          const dist = dx*axisX + dy*axisY;
+
+          // b1 projection radius
+          const r1 = hw1 * abs(axisX*ay1x + axisY*ay1y) + hl1 * abs(axisX*ax1x + axisY*ax1y);
+          // b2 projection radius
+          const r2 = hw2 * abs(axisX*ay2x + axisY*ay2y) + hl2 * abs(axisX*ax2x + axisY*ax2y);
+
+          const pen = (r1 + r2) - abs(dist);
+          return { pen, dist };
+        }
+
+        const axes = [
+          {x:ax1x,y:ax1y},
+          {x:ay1x,y:ay1y},
+          {x:ax2x,y:ax2y},
+          {x:ay2x,y:ay2y},
+        ];
+
+        let minPen = 1e9;
+        let minAxis = null;
+        let minDist = 0;
+
+        for (const ax of axes){
+          const res = satAxis(ax.x, ax.y);
+          if (res.pen <= 0){ minAxis = null; break; } // separated
+          if (res.pen < minPen){
+            minPen = res.pen;
+            minAxis = ax;
+            minDist = res.dist;
+          }
+        }
+
+        if (minAxis){
+          // Push out along minimum-penetration axis
+          const nx = (minDist >= 0) ? minAxis.x : -minAxis.x;
+          const ny = (minDist >= 0) ? minAxis.y : -minAxis.y;
+
+          const maxPush = 5; // clamp per tick to avoid "teleport"
+          const push = Math.min(minPen * 0.55, maxPush);
+
+          b1.x -= nx*push; b1.y -= ny*push;
+          b2.x += nx*push; b2.y += ny*push;
+
+          // Dampen relative velocity along collision normal (prevents launching)
+          const v1n = (b1.vx||0)*nx + (b1.vy||0)*ny;
+          const v2n = (b2.vx||0)*nx + (b2.vy||0)*ny;
+          const rel = v2n - v1n;
+          if (rel < 0){
+            const damp = 0.8;
+            const impulse = (-rel) * (1-damp);
+            b1.vx = (b1.vx||0) - nx*impulse;
+            b1.vy = (b1.vy||0) - ny*impulse;
+            b2.vx = (b2.vx||0) + nx*impulse;
+            b2.vy = (b2.vy||0) + ny*impulse;
+          }
+        }
+      }
+
+// Collision with arena walls (simple)
       if (this.track.kind==='arena' && this.track.walls){
         this.resolveWallCollisions();
       }
       // Collision with user obstacles
       this.resolveObstacleCollisions();
+
+
+      // Sumo: out-of-ring check using rectangular hitbox corners (tighter than radius)
+      if (this.track && this.track.kind==='sumo'){
+        const R = this.track.arenaRadius || 120;
+
+        const cornerOut = (b)=>{
+          const hw = (b.halfWidth  != null) ? b.halfWidth  : 34;
+          const hl = (b.halfLength != null) ? b.halfLength : 44;
+          const a = b.a || 0;
+          const ca = Math.cos(a), sa = Math.sin(a);
+          // forward axis (ca,sa), left axis (-sa,ca)
+          const fx = ca, fy = sa;
+          const lx = -sa, ly = ca;
+          const corners = [
+            {x: b.x + fx*hl + lx*hw, y: b.y + fy*hl + ly*hw},
+            {x: b.x + fx*hl - lx*hw, y: b.y + fy*hl - ly*hw},
+            {x: b.x - fx*hl + lx*hw, y: b.y - fy*hl + ly*hw},
+            {x: b.x - fx*hl - lx*hw, y: b.y - fy*hl - ly*hw},
+          ];
+          for (const p of corners){
+            if (Math.hypot(p.x||0, p.y||0) > R) return true;
+          }
+          return false;
+        };
+
+        const out1 = cornerOut(this.bot);
+        const out2 = this.bot2 ? cornerOut(this.bot2) : false;
+
+        this.sumoOut = out1;
+        this.sumoOut2 = out2;
+
+        if (!this.sumoWinner){
+          if (out1 && !out2) this.sumoWinner = 'opponent';
+          else if (out2 && !out1) this.sumoWinner = 'you';
+          else if (out1 && out2) this.sumoWinner = 'draw';
+        }
+      }
 
       // Update sensors
       this.updateSensors();
@@ -6231,10 +6865,28 @@ ${code}
           this.sensorValues[i]=d;
           window.sensorData[i]=d;
         } else {
-          // Color sensor: 0/100 depending on black line on LineFollow track
+          // Color sensor: sample a 5x5 footprint under the sensor (stable line reading)
           let val = 0;
           if (track.kind==='line'){
-            val = pointOnLineTrack(track, sx,sy) ? 100 : 0;
+            const w = (track.lineWidth || 16);
+            const step = w/4; // 5 samples: -2..2 => span ~w
+            let on = 0, total = 0;
+            for (let iy=-2; iy<=2; iy++){
+              for (let ix=-2; ix<=2; ix++){
+                const ox = ix*step;
+                const oy = iy*step;
+                const px = sx + ox*ca - oy*sa;
+                const py = sy + ox*sa + oy*ca;
+                total++;
+                if (pointOnLineTrack(track, px, py)) on++;
+              }
+            }
+            val = Math.round((on/total)*100);
+            if (!this._lightSmooth) this._lightSmooth = [0,0,0,0];
+            const prev = this._lightSmooth[i] || 0;
+            const sm = prev*0.65 + val*0.35;
+            this._lightSmooth[i] = sm;
+            val = Math.round(sm);
           } else {
             val = 0;
           }
@@ -6293,7 +6945,6 @@ ${code}
 
     updateHUD(){
       if (this.ui.pLR) this.ui.pLR.textContent = this.lastCmd;
-      if (this.ui.pOff) this.ui.pOff.style.display = this.offTrack ? '' : 'none';
     },
 
     render(){
@@ -6696,4 +7347,94 @@ ${code}
     configureSensors: (cfg)=> Sim.setSensorsConfig(cfg),
     _sim: Sim,
   };
+
+// === МІНІ-КНОПКА ОНЛАЙН (крапка біля "Сумо онлайн") ===
+(function mountOnlineDotNearSumoTab(){
+  function createDotBtn(){
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.id = 'rcsim2dOnlineDotBtn';
+    btn.className = 'rcsim2d-topBtn';
+    btn.style.cssText = `
+      margin-left:8px;
+      width:34px;
+      height:34px;
+      padding:0;
+      border-radius:12px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+    `;
+
+    const dot = document.createElement('span');
+    dot.className = 'rcsim2d-onlineDot red';
+    btn.appendChild(dot);
+
+    function apply(){
+      const st = window.onlineState || (window.isOnline ? 'online' : 'offline');
+      dot.classList.remove('red','green','yellow');
+      if (st === 'online') dot.classList.add('green');
+      else if (st === 'connecting') dot.classList.add('yellow');
+      else dot.classList.add('red');
+
+      btn.title = (st === 'online') ? 'ONLINE (клік — вимкнути)' :
+                  (st === 'connecting') ? 'CONNECTING...' :
+                  'OFFLINE (клік — підключитись)';
+    }
+
+    btn.addEventListener('click', ()=>{
+      const st = window.onlineState || (window.isOnline ? 'online' : 'offline');
+      if (st !== 'online'){
+        // connect
+        try{
+          window.onlineState = 'connecting';
+          apply();
+          window.connectToSumo && window.connectToSumo();
+        }catch(e){
+          window.onlineState = 'offline';
+          apply();
+        }
+      } else {
+        // disconnect
+        try{
+          if (window.serverWs) window.serverWs.close();
+        }catch(e){}
+        window.onlineState = 'offline';
+        window.isOnline = false;
+        apply();
+      }
+    });
+
+    // keep color in sync
+    setInterval(apply, 300);
+    apply();
+    return btn;
+  }
+
+  function findSumoTab(){
+    const els = Array.from(document.querySelectorAll('button,a,div,span'));
+    return els.find(el => (el.innerText || '').trim() === 'Сумо онлайн');
+  }
+
+  function tryMount(){
+    if (document.getElementById('rcsim2dOnlineDotBtn')) return true;
+    const tab = findSumoTab();
+    if (!tab) return false;
+    const btn = createDotBtn();
+    tab.insertAdjacentElement('afterend', btn);
+    return true;
+  }
+
+  let tries = 0;
+  const t = setInterval(()=>{
+    tries++;
+    if (tryMount() || tries > 80) clearInterval(t);
+  }, 250);
+
+  const mo = new MutationObserver(()=>{
+    if (!document.getElementById('rcsim2dOnlineDotBtn')) tryMount();
+  });
+  mo.observe(document.body, { childList:true, subtree:true });
+})();
+
 })();
